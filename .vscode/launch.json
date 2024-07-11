@@ -6,6 +6,13 @@
     "configurations": [
         {
             "type": "java",
+            "name": "HallowedHelperPluginTest",
+            "request": "launch",
+            "mainClass": "com.HallowedHelper.HallowedHelperPluginTest",
+            "projectName": "HallowedHelper-Hallowed-Helper"
+        },
+        {
+            "type": "java",
             "name": "Current File",
             "request": "launch",
             "mainClass": "${file}"
@@ -16,7 +23,9 @@
             "request": "launch",
             "mainClass": "com.example.ExamplePluginTest",
             "projectName": "example-Hallowed-Helper",
-            "vmArgs": ["-ea"]
+            "vmArgs": [
+                "-ea"
+            ]
         }
     ]
 }
