@@ -1,6 +1,5 @@
 package com.HallowedHelper;
 
-import static java.lang.Integer.parseInt;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -43,7 +42,7 @@ public class HallowedHelperPlugin extends Plugin
 	private static final int RACE_STYLE_SOUND_HIGH = 3818;
 	private final Map<GameObject, Integer> statueShortTimers = new HashMap<>();
 	private final Map<GameObject, Integer> statueLongTimers = new HashMap<>();
-	private int syncTick = -1;
+	public int syncTick = -1;
 
 	@Getter
 	private final Map<GameObject, WorldPoint[]> statues = new HashMap<>();
@@ -100,47 +99,14 @@ public class HallowedHelperPlugin extends Plugin
 			return;
 		}
 
-		if (!HALLOW_REGIONS.contains(p.getWorldLocation().getRegionID()))
+		/*if (!HALLOW_REGIONS.contains(p.getWorldLocation().getRegionID()))
 		{
 			disableOverlay();
 			return;
-		}	
+		}	*/
 		
 		enableOverlay();
-		filterGameObjects(p.getWorldView());
-		if (statues.isEmpty())
-		{
-			return;
-		}
-
-		statues.forEach((statue,flameTiles) -> {
-			if (statue == null || flameTiles == null)
-			{
-				return;
-			}
-
-			if(checkStatuesAnimation(statue) == 8659)
-			{
-				GameTick start = null;
-				GameTick end = null;
-				while(!isTracked(statue))
-				{
-					if (start != null && end != null)
-					{
-						final int cycleDuration = parseInt(end.toString()) - parseInt(start.toString());
-						
-						storeStatueTimer(statue, cycleDuration, client.getTickCount());
-					}
-					if(checkStatuesAnimation(statue) == 8655)
-					{
-						if(start == null)
-							start = e;
-						else
-							end = e;
-					}
-				}
-			}
-		});
+		System.err.println("tick");
 
 		playCountdownSounds(client.getTickCount());
 	}
@@ -164,12 +130,12 @@ public class HallowedHelperPlugin extends Plugin
 	public void filterGameObjects(WorldView view)
 	{
 		Tile[][] tiles = view.getScene().getTiles()[view.getPlane()];
-
+		System.err.println("Tiles Loaded");
 		final WorldPoint location = client.getLocalPlayer().getWorldLocation();
-		if (!HALLOW_REGIONS.contains(location.getRegionID()))
+		/*if (!HALLOW_REGIONS.contains(location.getRegionID()))
 		{
 			return;
-		}
+		}*/
 		final int width = tiles.length;
 		final int height = tiles[0].length;
 
@@ -190,8 +156,9 @@ public class HallowedHelperPlugin extends Plugin
 
 				for (GameObject gameObject : gameObjects) 
 				{
-					if (isWizardStatue(gameObject) && statues.get(gameObject) == null)
+					if (isWizardStatue(gameObject)) //TODO: MAKE THIS IF STATEMENT ALSO CHECK FOR WIZARD STATUES THAT ARE ACCOUNTED FOR BY TRAVERSING THE HASHMAP AND CROSSREFERENCING TILE COORDS
 					{
+						System.err.println("Wizard Found!");
 						statues.put(gameObject, getFlamePath(gameObject));
 					}
 				}
