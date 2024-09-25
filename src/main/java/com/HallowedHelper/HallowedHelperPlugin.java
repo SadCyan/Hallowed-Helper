@@ -1,5 +1,6 @@
 package com.HallowedHelper;
 
+import java.awt.Color;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -10,6 +11,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.eventbus.Subscribe;
 
 import lombok.Getter;
+import lombok.Setter;
 import net.runelite.api.Animation;
 import net.runelite.api.Client;
 import net.runelite.api.DynamicObject;
@@ -31,21 +33,23 @@ import net.runelite.client.ui.overlay.OverlayManager;
 )
 public class HallowedHelperPlugin extends Plugin
 {
-	//FLAME_ID = 38427;
-	//FLAME_ANIMATION_IDS = ImmutableSet.of(8664,8661,8662,8663);
-	//static final Set<Integer> STATUE_ANIMATION_IDS = ImmutableSet.of(8656,8657,8658,8659);
-	private static final Set<Integer> HALLOW_REGIONS = ImmutableSet.of(10075,10187,10189,10188,10186);
+	//private static final Set<Integer> HALLOW_REGIONS = ImmutableSet.of(10075,10187,10189,10188,10186);
+	private static final Set<Integer> STATUE_ANIMATION_IDS = ImmutableSet.of(8656,8657,8658,8659);
 	private static final Set<Integer> STATUE_IDS = ImmutableSet.of(38409,38410,38411,38412,38416,38417,38418,38419,38420,38421,38422,38423,38424,38425);
 	private static final int TILE_RADIUS = 20;
-	private static final int LONG_DURATION_CUTOFF = 10;
 	private static final int RACE_STYLE_SOUND_LOW = 3817;
 	private static final int RACE_STYLE_SOUND_HIGH = 3818;
-	private final Map<GameObject, Integer> statueShortTimers = new HashMap<>();
-	private final Map<GameObject, Integer> statueLongTimers = new HashMap<>();
 	public int syncTick = -1;
+	public int loginTick = -1;
+	
+	@Getter
+	private final Map<GameObject, Integer> trackedStatues = new HashMap<>();
 
 	@Getter
-	private final Map<GameObject, WorldPoint[]> statues = new HashMap<>();
+	private final Map<Tile, GameObject> tileTracker = new HashMap<>();
+
+	@Getter @Setter
+	private int currentPlane = -1001;
 
 	@Inject
 	private Client client;
@@ -60,6 +64,8 @@ public class HallowedHelperPlugin extends Plugin
 	protected void startUp() throws Exception
 	{
 		enableOverlay();
+		loginTick = client.getTickCount();
+		currentPlane = client.getLocalPlayer().getWorldLocation().getPlane();
 	}
 
 	@Override
@@ -86,8 +92,17 @@ public class HallowedHelperPlugin extends Plugin
 		if (overlayEnabled)
 		{
 			overlayManager.remove(overlay);
+			tileTracker.clear();
+			trackedStatues.clear();
 		}
 		overlayEnabled = false;
+	}
+
+	public void cleanOverlay(int newPlane)
+	{
+		disableOverlay();
+		currentPlane = newPlane;
+		enableOverlay();
 	}
 
 	@Subscribe
@@ -98,16 +113,8 @@ public class HallowedHelperPlugin extends Plugin
 		{
 			return;
 		}
-
-		/*if (!HALLOW_REGIONS.contains(p.getWorldLocation().getRegionID()))
-		{
-			disableOverlay();
-			return;
-		}	*/
 		
 		enableOverlay();
-		System.err.println("tick");
-
 		playCountdownSounds(client.getTickCount());
 	}
 
@@ -127,21 +134,16 @@ public class HallowedHelperPlugin extends Plugin
 		return gameObject != null && (gameObject.getHash() >> 14 & 3) == 2;
 	}
 
-	public void filterGameObjects(WorldView view)
+	public synchronized void filterGameObjects(WorldView view)
 	{
 		Tile[][] tiles = view.getScene().getTiles()[view.getPlane()];
-		System.err.println("Tiles Loaded");
 		final WorldPoint location = client.getLocalPlayer().getWorldLocation();
-		/*if (!HALLOW_REGIONS.contains(location.getRegionID()))
-		{
-			return;
-		}*/
 		final int width = tiles.length;
 		final int height = tiles[0].length;
 
-		for (int i = 0; i < width; i++)
+		for (int i = 0; i < width-1; i++)
 		{
-			for (int j = 0; j < height; j++)
+			for (int j = 0; j < height-1; j++)
 			{
 				Tile tile = tiles[i][j];
 				if (tile == null)
@@ -152,40 +154,90 @@ public class HallowedHelperPlugin extends Plugin
 				{
 					continue;
 				}
-				GameObject[] gameObjects = tile.getGameObjects();
-
-				for (GameObject gameObject : gameObjects) 
+				if (tileTracker.containsKey(tile))
 				{
-					if (isWizardStatue(gameObject)) //TODO: MAKE THIS IF STATEMENT ALSO CHECK FOR WIZARD STATUES THAT ARE ACCOUNTED FOR BY TRAVERSING THE HASHMAP AND CROSSREFERENCING TILE COORDS
-					{
-						System.err.println("Wizard Found!");
-						statues.put(gameObject, getFlamePath(gameObject));
-					}
+					continue;
+				}	
+				
+				GameObject statueFound = getStatueFromTile(tile);
+				if(statueFound == null)
+				{
+					continue;
 				}
+
+				if(!tileTracker.containsKey(tile) && !trackedStatues.containsKey(statueFound))
+				{
+					tileTracker.put(tile, statueFound);
+					tiles[i][j+1] = null;
+					tiles[i+1][j] = null;
+					tiles[i+1][j+1] = null;
+					trackedStatues.put(statueFound, -2);
+				}	
+
 			}
 		}
 	}
 
-	public void storeStatueTimer(GameObject statue, int cycle, int start)
+	public synchronized void updateStatueAnimationIds()
 	{
-		if(cycle < LONG_DURATION_CUTOFF)
-			statueShortTimers.put(statue, start);
-		else
-			statueLongTimers.put(statue, start);
+		if (tileTracker == null || tileTracker.isEmpty())
+		{
+			return;
+		}
+
+		tileTracker.forEach((tile, statue) -> {
+			if (tile == null || statue == null)
+			{
+				return;
+			}
+
+			GameObject checkedStatue = getStatueFromTile(tile);
+			if (checkedStatue == null)
+			{
+				tileTracker.remove(tile);
+				return;
+			}
+			int checkedAnimationID = checkStatuesAnimation(checkedStatue);
+			if (checkedAnimationID == -1001)
+			{
+				trackedStatues.remove(statue);
+				tileTracker.remove(tile);
+			}
+			if (checkedAnimationID == trackedStatues.get(statue))
+			{
+				return;
+			}
+
+			if (STATUE_ANIMATION_IDS.contains(checkedAnimationID))
+			{
+				tileTracker.put(tile, checkedStatue);
+				trackedStatues.remove(statue);
+				trackedStatues.put(statue, checkedAnimationID);
+			}
+		});
 	}
 
-	public boolean isTracked(GameObject statue)
+	public GameObject getStatueFromTile(Tile tile)
 	{
-		return statue != null && (statueShortTimers.get(statue) != null || statueLongTimers.get(statue) != null);
-	}
+		if (tile == null)
+		{
+			return null;
+		}
 
-	public Integer getStatueStart(GameObject statue)
-	{
-		if(statueLongTimers != null && statue != null && statueLongTimers.get(statue) != null)
-			return statueLongTimers.get(statue);
-		else if(statueShortTimers != null && statue != null && statueShortTimers.get(statue) != null)
-			return statueShortTimers.get(statue);
-		
+		GameObject[] gameObjects = tile.getGameObjects();
+		if(gameObjects == null)
+		{
+			return null;
+		}
+
+		for (GameObject gameObject : gameObjects) 
+		{
+			if (isWizardStatue(gameObject))
+			{
+				return gameObject;
+			}
+		}
+
 		return null;
 	}
 
@@ -193,9 +245,11 @@ public class HallowedHelperPlugin extends Plugin
 	{
 		if (statue != null)
 		{
-			return getAnimationId(statue.getRenderable());
+			int id = getAnimationId(statue.getRenderable());
+			//System.err.println(getRelativeTick(client.getTickCount()) + " Animation Checked for Statue at x:" + statue.getX() + ",y:" + statue.getY() + " [AnimationID]:" + id);
+			return id;
 		}
-		return -1;
+		return -1001;
 	}
 
 	public int getAnimationId(Renderable renderable)
@@ -234,31 +288,44 @@ public class HallowedHelperPlugin extends Plugin
 		{
 			return null;
 		}
-
-		WorldPoint statueWP = statue.getWorldLocation();
+		//this will always be the SW tile of the statue
+		WorldPoint statueWP;
 
 		if (facingDirection(statue) == 0)
 		{
+			//hand is in the SW tile -> S
+			statueWP = statue.getWorldLocation();
 			WorldPoint[] tiles = {statueWP.dy(-1),statueWP.dy(-2),statueWP.dy(-3)};
 			return tiles;
 		}
 		if (facingDirection(statue) == 1)
 		{
+			//hand is in the NW tile -> W
+			statueWP = statue.getWorldLocation().dy(1);
 			WorldPoint[] tiles = {statueWP.dx(-1),statueWP.dx(-2),statueWP.dx(-3)};
 			return tiles;
 		}
 		if (facingDirection(statue) == 2)
 		{
+			//hand is in the NE tile -> N
+			statueWP = statue.getWorldLocation().dx(1).dy(1);
 			WorldPoint[] tiles = {statueWP.dy(1),statueWP.dy(2),statueWP.dy(3)};
 			return tiles;
 		}
 		if (facingDirection(statue) == 3)
 		{
+			//hand is in the SE tile -> E
+			statueWP = statue.getWorldLocation().dx(1);
 			WorldPoint[] tiles = {statueWP.dx(1),statueWP.dx(2),statueWP.dx(3)};
 			return tiles;
 		}
 		
 		return null;
+	}
+
+	public int getRelativeTick(int tick)
+	{
+		return tick - loginTick;
 	}
 
 	private void playCountdownSounds(int startTick)
@@ -283,5 +350,12 @@ public class HallowedHelperPlugin extends Plugin
 	public void synchroTicks(int tickCount) 
 	{
 		syncTick = tickCount % 16;
+	}
+
+	public Color outOfRange(WorldPoint tiles, Color status) 
+	{
+		if (client.getLocalPlayer().getWorldLocation().distanceTo(tiles) <= 8)
+			return status;	
+		return Color.DARK_GRAY;
 	}
 }
